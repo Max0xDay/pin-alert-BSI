@@ -61,7 +61,7 @@ when entering into critical state
 
 // config
 #define DIGITAL_PIN1     0   // WiringPi pin number (GPIO 17)
-#define API_ENDPOINT    "http://192.168.1.94:4000/sensors" // need to swap out endpoint adresses at later stage.
+#define API_ENDPOINT    "http://192.168.1.92:4000/sensors" // need to swap out endpoint adresses at later stage.
 
 
 void voltage_drop_handler(void);
@@ -133,32 +133,45 @@ int main() {
         return 1;
     }
 
+printf("WiringPi setup successful\n");
     // Add pins and sensors here. pwr pin 0 will be our default power check
     //posibility of adding battery backup to raspi incase of full power drop
     pinMode(DIGITAL_PIN1, INPUT);
-    
+       printf("Pin mode set\n");
+     sleep(2);
+
+
     // flop falling edge 
   if (wiringPiISR(DIGITAL_PIN1, INT_EDGE_FALLING, &voltage_drop_handler) < 0) {
     fprintf(stderr, "Unable to setup ISR\n");
     return 1;
 }
+
+
+ printf("ISR setup successful\n");
 while(1) {
+     printf("Running main loop\n");
     if (voltage_drop_detected) { // this is instant read which is not great and causes double critical messages 
         int volt_reading = digitalRead(DIGITAL_PIN1);
         if (volt_reading == LOW) { // double check here ik its bad to but eh
            // send_api_request("Critical", volt_reading, 0, 0);
             voltage_drop_detected = 0; // flag here TODO change later 
             critical_state = 1; 
+             printf("critical \n");
         }
     }
 
     // check state 
     if (!critical_state) {
+        printf("not in critical \n");
         int current_state = digitalRead(DIGITAL_PIN1);
         send_api_request("System Ok", current_state, 0, 0);
         sleep(10); // Sleep only when not in critical state
     } else {
+       
         int volt_reading = digitalRead(DIGITAL_PIN1);
+        printf("Voltage reading: %d\n", volt_reading);
+
         if (volt_reading == LOW) { // double check here 
             send_api_request("Critical", volt_reading, 0, 0);
         } else {
