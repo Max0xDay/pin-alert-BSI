@@ -67,11 +67,26 @@ when entering into critical state
 
 */
 
+/*
++--------------+----------------+----------------------+
+| Physical Pin | WiringPi Pin   | Purpose              |
++--------------+----------------+----------------------+
+|      3       |       8        |                      |
+|      5       |       9        |                      |
+|      7       |       7        |                      |
+|     11       |       0        | voltage drop         |
+|     13       |       2        |                      |
+|     15       |       3        |                      |
+|     19       |      12        |                      |
+|     21       |      13        |                      |
+|     23       |      14        |                      |
+|     29       |      21        |                      |
++--------------+----------------+----------------------+ */
 
 
 // Configuration
-#define DIGITAL_PIN1     0   // WiringPi pin number (GPIO 17)
 #define API_ENDPOINT    "http://192.168.1.92:4000"
+#define DIGITAL_PIN1     0   // WiringPi pin number (GPIO 17)
 #define CHECK_INTERVAL  10   // Seconds between checks
 #define STATUS_INTERVAL 2    // Seconds between status updates
 
@@ -79,12 +94,14 @@ size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
     return size * nmemb;
 }
 
-int send_api_request(const char* status, int volt, int temp, int temp2) {
+
+// timestamp, status, pin0, pin2, pin3, pin7, pin8, pin9, pin12, pin13, pin14, pin21
+int send_data_request(const int status, int volt, int temp, int temp2) {
     CURL *curl;
     CURLcode res;
     int http_code = 0;
 
-    // Generate timestamp
+    // get local time rather than time when it is recieved 
     time_t now;
     char timestamp[30];
     time(&now);
@@ -93,36 +110,23 @@ int send_api_request(const char* status, int volt, int temp, int temp2) {
     // Prepare payload
     char payload[256];
     snprintf(payload, sizeof(payload), 
-        "{\"timestamp\":\"%s\",\"status\":\"%s\",\"volt\":%d,\"temp\":%d,\"temp2\":%d}", 
+        "{\"timestamp\":\"%s\",\"status\":\"%d\",\"volt\":%d,\"temp\":%d,\"temp2\":%d}", 
         timestamp, status, volt, temp, temp2);
 
     curl = curl_easy_init();
     if(curl) {
         struct curl_slist *headers = NULL;
         headers = curl_slist_append(headers, "Content-Type: application/json");
-
-
         curl_easy_setopt(curl, CURLOPT_URL, ({ char url[256]; snprintf(url, sizeof(url), "%s/sensors", API_ENDPOINT); url; }));
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload);
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-
-        res = curl_easy_perform(curl);
-        
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-
-        if(res != CURLE_OK) {
-            fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-        } else {
-            fprintf(stderr, "Sent to server: %s\n", payload);
-        }
-      
-        // clean
+        curl_easy_perform(curl);
         curl_slist_free_all(headers);
         curl_easy_cleanup(curl);
     }
 
-    return http_code;
+    return 0;
 }
 
 /**
@@ -176,8 +180,8 @@ int main() {
         if(now - last_check >= CHECK_INTERVAL) {
             last_check = now;
             int current_state = digitalRead(DIGITAL_PIN1);
-            const char* status = (current_state == LOW) ? "Critical" : "System Ok";
-            send_api_request(status, current_state, 0, 0);
+            const int status = (current_state == LOW) ? 1 : 2;
+            send_data_request(status, current_state, 0, 0);
         }
 
         if(now - last_status_update >= STATUS_INTERVAL) {
