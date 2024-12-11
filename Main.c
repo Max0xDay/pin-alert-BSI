@@ -32,6 +32,15 @@ to run : gcc Main.c -o pinalertv1 -lwiringPi -lcurl && ./pinalertv1
 */
 
 /*
+
+Futher notes:
+
+JSON format for export 
+posible sending critical failure package to client through whatsapp or email.
+needs to use all GPIO pins. - TODO: make diagram to outline the pinouts and how one pin has to be reserved
+voltage of triger pin needs to check tolerance 
+
+
 Planned rewrite:
 
     raspi Side:
@@ -53,20 +62,18 @@ when entering into critical state
     - when making a report inclue the first 2 system ok variables to see the changes in the system.
     - add button to view critical reports. 
     - add a api response time and detaisl about how long its taking the packet and the ping between the device and the server
-    - when writing to the database include the state it is in. if the previous 5 readings are system ok then overite them rather than create a new entry. 
+    - when writing to the database include the state    it is in. if the previous 5 readings are system ok then overite them rather than create a new entry. 
     this is to prevent th database from filling up with entries that are not needed. all critical readings should be recorded.
 
 */
 
 
-// config
+
+// Configuration
 #define DIGITAL_PIN1     0   // WiringPi pin number (GPIO 17)
-#define API_ENDPOINT    "http://192.168.1.92:4000/sensors" // need to swap out endpoint adresses at later stage.
-
-
-void voltage_drop_handler(void);
-volatile sig_atomic_t voltage_drop_detected = 0;
-volatile sig_atomic_t critical_state = 0;
+#define API_ENDPOINT    "http://192.168.1.92:4000"
+#define CHECK_INTERVAL  10   // Seconds between checks
+#define STATUS_INTERVAL 2    // Seconds between status updates
 
 size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
     return size * nmemb;
@@ -77,43 +84,40 @@ int send_api_request(const char* status, int volt, int temp, int temp2) {
     CURLcode res;
     int http_code = 0;
 
-    // log timestamp at device time rather than endpoint time 
+    // Generate timestamp
     time_t now;
     char timestamp[30];
     time(&now);
     strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%S.000Z", localtime(&now));
 
-
+    // Prepare payload
     char payload[256];
     snprintf(payload, sizeof(payload), 
         "{\"timestamp\":\"%s\",\"status\":\"%s\",\"volt\":%d,\"temp\":%d,\"temp2\":%d}", 
         timestamp, status, volt, temp, temp2);
-
 
     curl = curl_easy_init();
     if(curl) {
         struct curl_slist *headers = NULL;
         headers = curl_slist_append(headers, "Content-Type: application/json");
 
-        curl_easy_setopt(curl, CURLOPT_URL, API_ENDPOINT);
+
+        curl_easy_setopt(curl, CURLOPT_URL, ({ char url[256]; snprintf(url, sizeof(url), "%s/sensors", API_ENDPOINT); url; }));
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload);
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
 
         res = curl_easy_perform(curl);
         
-        // response shouldnt be needed
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
 
         if(res != CURLE_OK) {
             fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
         } else {
-            char *response = NULL;
-            curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &response);
-            fprintf(stderr, "Sent to server.\t response : %s\n", response ? response : "No response");
+            fprintf(stderr, "Sent to server: %s\n", payload);
         }
       
-        //clean
+        // clean
         curl_slist_free_all(headers);
         curl_easy_cleanup(curl);
     }
@@ -121,65 +125,69 @@ int send_api_request(const char* status, int volt, int temp, int temp2) {
     return http_code;
 }
 
-//interrupt 
-void voltage_drop_handler() {
-    voltage_drop_detected = 1;
-    critical_state = 1;
+/**
+ * Sends a status update to the server.
+ *
+ * This function sends a POST request to the server with the current system state.
+ * - 0: System offline
+ * - 1: Critical 
+ * - 2: System OK 
+ */
+int send_status_update(int state) {
+    CURL *curl = curl_easy_init();
+    if(curl) {
+        char post_data[50];
+        snprintf(post_data, sizeof(post_data), "{\"state\": %d}", state);
+        struct curl_slist *headers = curl_slist_append(NULL, "Content-Type: application/json");
+        curl_easy_setopt(curl, CURLOPT_URL, ({ char url[256]; snprintf(url, sizeof(url), "%s/system/state", API_ENDPOINT); url; }));
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_data);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+        curl_easy_perform(curl);
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+
+        if(headers){
+            printf("headers have values\n");
+        }
+
+    } 
+    return 0;
 }
 
+
 int main() {
+    time_t last_check = 0;
+    time_t last_status_update = 0;
+
+    // WiringPi setup
     if (wiringPiSetup() == -1) {
         fprintf(stderr, "WiringPi setup failed\n");
         return 1;
     }
 
-printf("WiringPi setup successful\n");
-    // Add pins and sensors here. pwr pin 0 will be our default power check
-    //posibility of adding battery backup to raspi incase of full power drop
+    // Set pin mode
     pinMode(DIGITAL_PIN1, INPUT);
-       printf("Pin mode set\n");
-     sleep(2);
+    printf("Voltage monitoring started...\n");
 
+    while(1) {
+        time_t now = time(NULL);
 
-    // flop falling edge 
-  if (wiringPiISR(DIGITAL_PIN1, INT_EDGE_FALLING, &voltage_drop_handler) < 0) {
-    fprintf(stderr, "Unable to setup ISR\n");
-    return 1;
-}
-
-
- printf("ISR setup successful\n");
-while(1) {
-     printf("Running main loop\n");
-    if (voltage_drop_detected) { // this is instant read which is not great and causes double critical messages 
-        int volt_reading = digitalRead(DIGITAL_PIN1);
-        if (volt_reading == LOW) { // double check here ik its bad to but eh
-           // send_api_request("Critical", volt_reading, 0, 0);
-            voltage_drop_detected = 0; // flag here TODO change later 
-            critical_state = 1; 
-             printf("critical \n");
+        if(now - last_check >= CHECK_INTERVAL) {
+            last_check = now;
+            int current_state = digitalRead(DIGITAL_PIN1);
+            const char* status = (current_state == LOW) ? "Critical" : "System Ok";
+            send_api_request(status, current_state, 0, 0);
         }
+
+        if(now - last_status_update >= STATUS_INTERVAL) {
+            last_status_update = now;
+            int state = (digitalRead(DIGITAL_PIN1) == LOW) ? 1 : 2;
+            send_status_update(state);
+        }
+
+        sleep(1);
     }
 
-    // check state 
-    if (!critical_state) {
-        printf("not in critical \n");
-        int current_state = digitalRead(DIGITAL_PIN1);
-        send_api_request("System Ok", current_state, 0, 0);
-        sleep(10); // Sleep only when not in critical state
-    } else {
-       
-        int volt_reading = digitalRead(DIGITAL_PIN1);
-        printf("Voltage reading: %d\n", volt_reading);
-
-        if (volt_reading == LOW) { // double check here 
-            send_api_request("Critical", volt_reading, 0, 0);
-        } else {
-            critical_state = 0; // power restored
-            send_api_request("System Ok", volt_reading, 0, 0);
-        }
-        sleep(10); // delay bewteen checks 
-    }
-}
-return 0;
+    return 0;
 }
