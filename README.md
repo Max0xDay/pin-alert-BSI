@@ -30,6 +30,15 @@ To build and run the project, use the following command:
 ```sh
 gcc Main.c -o pinalertv1 -lwiringPi -lcurl && ./pinalertv1
 ```
+or 
+
+```sh
+## give perms to script
+chmod +x run.sh
+#run the script
+./run.sh
+```
+
 This will compile the Main.c file and create an executable named pinalertv1, which will then be executed.
 
 

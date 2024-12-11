@@ -1,0 +1,1 @@
+gcc Main.c -o pinalertv1 -lwiringPi -lcurl && ./pinalertv1
