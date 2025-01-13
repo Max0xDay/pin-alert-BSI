@@ -40,6 +40,9 @@ posible sending critical failure package to client through whatsapp or email.
 needs to use all GPIO pins. - TODO: make diagram to outline the pinouts and how one pin has to be reserved
 voltage of triger pin needs to check tolerance
 
+Posibility of integrating mongoose to make 2 way api. currently curl is only good if u are a client sending stuff to a server but if we need to send stuff back 
+we can either use the response code of the status or we can ue mongoose to make 2 way api
+
 
 Planned rewrite:
 
@@ -65,6 +68,9 @@ when entering into critical state
     - when writing to the database include the state    it is in. if the previous 5 readings are system ok then overite them rather than create a new entry.
     this is to prevent th database from filling up with entries that are not needed. all critical readings should be recorded.
 
+    work out why firefox just dies when server side is loaded 
+
+
 */
 
 /*
@@ -84,17 +90,26 @@ when entering into critical state
 +--------------+----------------+----------------------+ */
 
 // Configuration
-#define API_ENDPOINT "http://192.168.1.92:4000"
-#define DIGITAL_PIN1 0 // significant pin for voltage test
+#define API_ENDPOINT "http://192.168.1.92:4000" // API's allow us to have the client ip be dynamic only the servers ip needs to be defined
 #define CHECK_INTERVAL 10 // Seconds between checks
 #define STATUS_INTERVAL 2 // Seconds between status updates
+#define COMMAND_CHECK_INTERVAL 1
+
+const int PIN[] = {0,2,3,7,8,9,12,13,14,21};
+
+//TODO: modify it so packages all follow similar structure 
+struct ResponseData {
+    char *data;
+    size_t size;
+};
+
 
 size_t write_callback(void * contents, size_t size, size_t nmemb, void * userp) {
   return size * nmemb;
 }
 
 // timestamp, status, pin0, pin2, pin3, pin7, pin8, pin9, pin12, pin13, pin14, pin21
-int send_data_request(const int status, float pins[]) { //TODO: clean this up
+int send_data_request(const int status, float PIN[]) { //TODO: clean this up
   CURL * curl;
   CURLcode res;
   int http_code = 0;
@@ -110,7 +125,7 @@ int send_data_request(const int status, float pins[]) { //TODO: clean this up
   snprintf(payload, sizeof(payload),
     "{\"timestamp\":\"%s\",\"status\":%d,\"pin0\":%.2f,\"pin2\":%.2f,\"pin3\":%.2f,\"pin7\":%.2f,\"pin8\":%.2f,\"pin9\":%.2f,"
     "\"pin12\":%.2f,\"pin13\":%.2f,\"pin14\":%.2f,\"pin21\":%.2f}",
-    timestamp, status, pins[0], pins[1], pins[2], pins[3], pins[4], pins[5], pins[6], pins[7], pins[8], pins[9]);
+    timestamp, status, PIN[0], PIN[1], PIN[2], PIN[3], PIN[4], PIN[5], PIN[6], PIN[7], PIN[8], PIN[9]);
 
   curl = curl_easy_init();
   if (curl) {
@@ -131,7 +146,6 @@ int send_data_request(const int status, float pins[]) { //TODO: clean this up
     curl_slist_free_all(headers); // Free headers AFTER the request
     curl_easy_cleanup(curl);
   }
-  printf("%d\n", http_code);
   return http_code;
 }
 
@@ -174,24 +188,25 @@ int main() {
   }
 
   // Set pin modes
-  int pins[] = {0,2,3,7,8,9,12,13,14,21};
-  for (int i = 0; i < sizeof(pins) / sizeof(pins[0]); i++) {
-    pinMode(pins[i], INPUT);
+  
+  for (int i = 0; i < sizeof(PIN) / sizeof(PIN[0]); i++) {
+    pinMode(PIN[i], INPUT);
   }
   printf("Voltage monitoring started...\n");
 
   while (1) {
     time_t now = time(NULL);
 
+
     if (now - last_check >= CHECK_INTERVAL) {
       last_check = now;
-      int current_state = digitalRead(DIGITAL_PIN1);
+      int current_state = digitalRead(PIN[0]);
       const int status = (current_state == LOW) ? 1 : 2;
 
       // Read pin values
       float pin_values[10];
-      for (int i = 0; i < sizeof(pins) / sizeof(pins[0]); i++) {
-        pin_values[i] = digitalRead(pins[i]);
+      for (int i = 0; i < sizeof(PIN) / sizeof(PIN[0]); i++) {
+        pin_values[i] = digitalRead(PIN[i]);
       }
 
       send_data_request(status, pin_values);
@@ -199,7 +214,7 @@ int main() {
 
     if (now - last_status_update >= STATUS_INTERVAL) {
       last_status_update = now;
-      int state = (digitalRead(DIGITAL_PIN1) == LOW) ? 1 : 2;
+      int state = ((digitalRead(PIN[0])) == LOW) ? 1 : 2;
       send_status_update(state);
     }
 
