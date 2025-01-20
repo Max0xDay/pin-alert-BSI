@@ -100,13 +100,35 @@ Server side needs to be rewirtten to graph and show data better for when its dro
 |     29       |      21        |                      |
 +--------------+----------------+----------------------+ */
 
+/*
+Program received signal SIGSEGV, Segmentation fault.
+__GI___libc_realloc (oldmem=0xfbad2a84, bytes=366504103789) at ./malloc/malloc.c:3422
+3422    ./malloc/malloc.c: No such file or directory.
+(gdb) backtrace
+#0  __GI___libc_realloc (oldmem=0xfbad2a84, bytes=366504103789) at ./malloc/malloc.c:3422
+#1  0x0000005555551064 in write_callback ()
+#2  0x0000007ff7f054fc in ?? () from /lib/aarch64-linux-gnu/libcurl.so.4
+#3  0x0000007ff7f152bc in ?? () from /lib/aarch64-linux-gnu/libcurl.so.4
+#4  0x0000007ff7efc1f4 in ?? () from /lib/aarch64-linux-gnu/libcurl.so.4
+#5  0x0000007ff7efd6a0 in curl_multi_perform () from /lib/aarch64-linux-gnu/libcurl.so.4
+#6  0x0000007ff7ed59e8 in curl_easy_perform () from /lib/aarch64-linux-gnu/libcurl.so.4
+#7  0x0000005555551264 in send_data_request ()
+#8  0x00000055555516fc in main ()
+*/
+
+
+
+
+
 // Configuration
 #define API_ENDPOINT "http://192.168.1.92:4000" // API's allow us to have the client ip be dynamic only the servers ip needs to be defined
-#define CHECK_INTERVAL 10 // Seconds between checks
-#define STATUS_INTERVAL 2 // Seconds between status updates
+int CHECK_INTERVAL = 10;  // Default value
+int STATUS_INTERVAL = 2;  // Default value
 #define COMMAND_CHECK_INTERVAL 1
 
 const int PIN[] = {0,2,3,7,8};
+
+//const int PIN[] = {0,2,3,7,8,9,12,13,14,21};
 
 //TODO: modify it so packages all follow similar structure 
 struct ResponseData {
@@ -120,43 +142,46 @@ size_t write_callback(void * contents, size_t size, size_t nmemb, void * userp) 
 }
 
 // timestamp, status, pin0, pin2, pin3, pin7, pin8, pin9, pin12, pin13, pin14, pin21
-int send_data_request(const int status, float PIN[]) { //TODO: clean this up
-  CURL * curl;
-  CURLcode res;
-  int http_code = 0;
 
-  // get local time rather than time when it is recieved
-  time_t now;
-  char timestamp[30];
-  time( & now);
-  strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%S.000Z", localtime( & now));
+int send_data_request(float PIN[]) {
+    CURL *curl;
+    CURLcode res;
+    int http_code = 0;
 
-  // Prepare payload
-  char payload[512];
-  snprintf(payload, sizeof(payload),
-    "{\"timestamp\":\"%s\",\"status\":%d,\"pin0\":%.2f,\"pin2\":%.2f,\"pin3\":%.2f,\"pin7\":%.2f,\"pin8\":%.2f}",
-    timestamp, status, PIN[0], PIN[1], PIN[2], PIN[3], PIN[4]);
+    // get local time rather than time when it is received
+    time_t now;
+    char timestamp[30];
+    time(&now);
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%S.000Z", localtime(&now));
 
-  curl = curl_easy_init();
-  if (curl) {
-    struct curl_slist * headers = NULL;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers); // Set headers
-    curl_easy_setopt(curl, CURLOPT_URL, ({
-      char url[256];snprintf(url, sizeof(url), "%s/sensors", API_ENDPOINT);url;
-    }));
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    // Prepare payload
+    char payload[512];
+    snprintf(payload, sizeof(payload),
+        "{\"timestamp\":\"%s\",\"pin0\":%.2f,\"pin2\":%.2f,\"pin3\":%.2f,\"pin7\":%.2f,\"pin8\":%.2f}",
+        timestamp, PIN[0], PIN[1], PIN[2], PIN[3], PIN[4]);
 
-    res = curl_easy_perform(curl);
-    if (res == CURLE_OK) {
-      curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, & http_code);
+    curl = curl_easy_init();
+    if (curl) {
+        struct curl_slist *headers = NULL;
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(curl, CURLOPT_URL, ({
+            char url[256];
+            snprintf(url, sizeof(url), "%s/sensors", API_ENDPOINT);
+            url;
+        }));
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+
+        res = curl_easy_perform(curl);
+        if (res == CURLE_OK) {
+            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+        }
+
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
     }
-
-    curl_slist_free_all(headers); // Free headers AFTER the request
-    curl_easy_cleanup(curl);
-  }
-  return http_code;
+    return http_code;
 }
 
 /**
@@ -167,9 +192,6 @@ int send_data_request(const int status, float PIN[]) { //TODO: clean this up
  * - 1: Critical
  * - 2: System OK
  */
-
-
-
 int send_status_update(int state) {
   CURL * curl = curl_easy_init();
   if (curl) {
@@ -190,84 +212,99 @@ int send_status_update(int state) {
 }
 
 
-int send_state_request(int state) {
-  CURL * curl;
-  CURLcode res;
-  int http_code = 0;
-
-  char payload[50];
-  snprintf(payload, sizeof(payload), "{\"state\": %d}", state);
-
-  curl = curl_easy_init();
-  if (curl) {
-    struct curl_slist * headers = NULL;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_URL, ({
-      char url[256];snprintf(url, sizeof(url), "%s/system/state", API_ENDPOINT);url;
-    }));
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-
-    res = curl_easy_perform(curl);
-    if (res == CURLE_OK) {
-      curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+size_t health_callback(void *contents, size_t size, size_t nmemb, void *userp) {
+    struct ResponseData *response = (struct ResponseData *)userp;
+    size_t realsize = size * nmemb;
+    
+    response->data = realloc(response->data, response->size + realsize + 1);
+    if(response->data == NULL) {
+        return 0;
     }
+    
+    memcpy(&(response->data[response->size]), contents, realsize);
+    response->size += realsize;
+    response->data[response->size] = 0;
 
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-  }
-  return http_code;
+    // Parse the plain-text response to extract intervals
+    char *line = strtok(response->data, "\n");
+    while (line != NULL) {
+        if (strncmp(line, "checkInterval=", 14) == 0) {
+            CHECK_INTERVAL = atoi(line + 14);  // Extract the value after 'checkInterval='
+        }
+        else if (strncmp(line, "statusInterval=", 15) == 0) {
+            STATUS_INTERVAL = atoi(line + 15);  // Extract the value after 'statusInterval='
+        }
+        line = strtok(NULL, "\n");  // Move to the next line
+    }
+    
+    return realsize;
 }
 
+int send_health_ping() {
+    CURL *curl;
+    CURLcode res;
+    struct ResponseData response = {0};
+    response.data = malloc(1);  // Initial allocation
+    response.size = 0;
 
+    curl = curl_easy_init();
+    if(curl) {
+        curl_easy_setopt(curl, CURLOPT_URL, ({
+            char url[256];
+            snprintf(url, sizeof(url), "%s/health", API_ENDPOINT);
+            url;
+        }));
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, health_callback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&response);
 
+        res = curl_easy_perform(curl);
+        if(res == CURLE_OK) {
+            printf("\n=== Health Check Response ===\n");
+            printf("%s\n", response.data);
+            printf("===========================\n\n");
+        } else {
+            fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+        }
+
+        curl_easy_cleanup(curl);
+        free(response.data);
+    }
+    return (res == CURLE_OK) ? 0 : 1;
+}
 
 
 int main() {
     time_t last_send_time = 0;
-    time_t last_status_time = 0;
-    int previous_state[5] = {0};
+    time_t last_health_ping_time = 0;
 
     if (wiringPiSetup() == -1) {
         fprintf(stderr, "WiringPi setup failed\n");
         return 1;
     }
 
-    for (int i = 0; i < sizeof(PIN) / sizeof(PIN[0]); i++) {
+    for (int i = 0; i < sizeof(PIN) / sizeof(PIN[0]); i++) 
         pinMode(PIN[i], INPUT);
-        previous_state[i] = digitalRead(PIN[i]);
-    }
+    
+    pullUpDnControl(PIN[3], PUD_DOWN); 
+    pullUpDnControl(PIN[4], PUD_DOWN);   
     printf("Voltage monitoring started...\n");
 
-    int critical_state = 2;
     while (1) {
         time_t now = time(NULL);
         float pin_values[5];
-        int new_critical_state = 2;
 
-        for (int i = 0; i < sizeof(PIN) / sizeof(PIN[0]); i++) {
+        if (now - last_health_ping_time >= STATUS_INTERVAL) {
+            send_health_ping();
+            last_health_ping_time = now;
+        }
+
+        for (int i = 0; i < sizeof(PIN) / sizeof(PIN[0]); i++) 
             pin_values[i] = digitalRead(PIN[i]);
-            if (previous_state[i] == HIGH && pin_values[i] == LOW) {
-                new_critical_state = 1;
-            }
-            previous_state[i] = pin_values[i];
-        }
-
-        if (new_critical_state != critical_state) {
-            critical_state = new_critical_state;
-            send_status_update(critical_state);
-            send_data_request(critical_state, pin_values);
-        }
-
+        
         if (now - last_send_time >= CHECK_INTERVAL) {
             last_send_time = now;
-            send_data_request(critical_state, pin_values);
-        }
-
-        if (now - last_status_time >= STATUS_INTERVAL) {
-            last_status_time = now;
-            send_status_update(critical_state);
+            send_data_request(pin_values);
+            printf("Sent sensor readings at %s\n", ctime(&now));
         }
 
         sleep(1);
