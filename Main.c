@@ -121,7 +121,8 @@ __GI___libc_realloc (oldmem=0xfbad2a84, bytes=366504103789) at ./malloc/malloc.c
 
 
 // Configuration
-#define API_ENDPOINT "http://192.168.1.92:4000" // API's allow us to have the client ip be dynamic only the servers ip needs to be defined
+#define API_ENDPOINT "http://192.168.1.91:4000" // API's allow us to have the client ip be dynamic only the servers ip needs to be defined
+#define DEVICE_SITE_NAME "testbuilding" // This should be set to what the site is called for easier identification of the device 
 int CHECK_INTERVAL = 10;  // Default value
 int STATUS_INTERVAL = 2;  // Default value
 #define COMMAND_CHECK_INTERVAL 1
@@ -141,7 +142,7 @@ size_t write_callback(void * contents, size_t size, size_t nmemb, void * userp) 
   return size * nmemb;
 }
 
-// timestamp, status, pin0, pin2, pin3, pin7, pin8, pin9, pin12, pin13, pin14, pin21
+// site_name, timestamp, status, pin0, pin2, pin3, pin7, pin8, pin9, pin12, pin13, pin14, pin21
 
 int send_data_request(float PIN[]) {
     CURL *curl;
@@ -157,8 +158,12 @@ int send_data_request(float PIN[]) {
     // Prepare payload
     char payload[512];
     snprintf(payload, sizeof(payload),
-        "{\"timestamp\":\"%s\",\"pin0\":%.2f,\"pin2\":%.2f,\"pin3\":%.2f,\"pin7\":%.2f,\"pin8\":%.2f}",
-        timestamp, PIN[0], PIN[1], PIN[2], PIN[3], PIN[4]);
+        "{\"sitename\":\"%s\",\"timestamp\":\"%s\",\"pin0\":%.2f,\"pin2\":%.2f,\"pin3\":%.2f,\"pin7\":%.2f,\"pin8\":%.2f}",
+        DEVICE_SITE_NAME,timestamp, PIN[0], PIN[1], PIN[2], PIN[3], PIN[4]);
+
+         printf(payload, sizeof(payload),
+        "{\"sitename\":\"%s\",\"timestamp\":\"%s\",\"pin0\":%.2f,\"pin2\":%.2f,\"pin3\":%.2f,\"pin7\":%.2f,\"pin8\":%.2f}",
+        DEVICE_SITE_NAME,timestamp, PIN[0], PIN[1], PIN[2], PIN[3], PIN[4]);
 
     curl = curl_easy_init();
     if (curl) {
